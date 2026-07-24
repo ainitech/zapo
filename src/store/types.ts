@@ -33,13 +33,44 @@ export interface WaStoreSession {
     readonly threads: WaThreadStore
     readonly contacts: WaContactStore
     readonly privacyToken: WaPrivacyTokenStore
+    /**
+     * Tears down the cache domains (retry/groupMetadata/deviceList/
+     * messageSecret) and swaps fresh, empty ones into this bundle. The
+     * session stays usable; the caches rebuild on demand. The swap happens
+     * after the old stores finish tearing down (so a persistent cache
+     * backend is never cleared under the fresh stores), which means cache
+     * operations issued while the reset is in flight may reject. References
+     * to the old cache stores captured before the call (e.g. by a live
+     * client) reject afterwards - recreate the client to pick up the fresh
+     * stores. Rejects when the old generation's teardown had failures - the
+     * fresh caches are still in place, but stale entries may remain in a
+     * persistent cache backend.
+     */
     destroyCaches(): Promise<void>
+    /**
+     * Final teardown of every domain store in this bundle. The bundle is
+     * single-shot: every operation on it rejects afterwards. The sessionId
+     * is released as soon as destruction starts, so a concurrent
+     * `store.session(id)` builds a fresh bundle instead of returning this
+     * one. Repeat calls return the same in-flight promise. Teardown
+     * failures are logged (warn), never thrown.
+     */
     destroy(): Promise<void>
 }
 
 export interface WaStore {
+    /**
+     * Returns the lock-wrapped per-domain store bundle for `sessionId`,
+     * building it on first use and caching it until its `destroy()` (or the
+     * store-wide `destroy()`) releases it.
+     */
     session(sessionId: string): WaStoreSession
+    /** Runs {@link WaStoreSession.destroyCaches} on every live session. */
     destroyCaches(): Promise<void>
+    /**
+     * Destroys every live session bundle and the registered backends. The
+     * store is single-shot: `session()` throws afterwards.
+     */
     destroy(): Promise<void>
 }
 
