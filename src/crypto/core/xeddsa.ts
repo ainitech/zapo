@@ -5,12 +5,31 @@ import { clampCurvePrivateKeyInPlace, montgomeryToEdwardsPublic } from '@crypto/
 import { encodeExtendedPoint, scalarMultBase } from '@crypto/math/edwards'
 import { bigIntToBytesLE, bytesToBigIntLE } from '@crypto/math/le'
 import { modGroup } from '@crypto/math/mod'
-import { assertByteLength, concatBytes } from '@util/bytes'
+import { resolveNativeCryptoBackend } from '@crypto/nativeBackend'
+import { assertByteLength, concatBytes, toBytesView } from '@util/bytes'
 
 const PREFIX_SIGNATURE_RANDOM = new Uint8Array([
     0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 ])
+
+interface NativeBinding {
+    readonly xeddsaSign: (privateKey: Uint8Array, message: Uint8Array) => Uint8Array
+    readonly xeddsaVerify: (
+        publicKey: Uint8Array,
+        message: Uint8Array,
+        signature: Uint8Array
+    ) => boolean
+}
+
+const nativeBinding: NativeBinding | null = (() => {
+    if (process.env.ZAPO_XEDDSA_FORCE_JS) return null
+    const mod = resolveNativeCryptoBackend()
+    if (mod && typeof mod.xeddsaSign === 'function' && typeof mod.xeddsaVerify === 'function') {
+        return { xeddsaSign: mod.xeddsaSign, xeddsaVerify: mod.xeddsaVerify }
+    }
+    return null
+})()
 
 /**
  * Verifies an XEdDSA signature over `message` against an X25519 (Montgomery)
@@ -22,6 +41,9 @@ export async function xeddsaVerify(
     message: Uint8Array,
     signature: Uint8Array
 ): Promise<boolean> {
+    if (nativeBinding) {
+        return nativeBinding.xeddsaVerify(curvePublicKey, message, signature)
+    }
     if (signature.length !== 64) {
         return false
     }
@@ -48,6 +70,10 @@ export async function xeddsaVerify(
  */
 export async function xeddsaSign(privateKey: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
     assertByteLength(privateKey, 32, `invalid curve25519 private key length ${privateKey.length}`)
+
+    if (nativeBinding) {
+        return toBytesView(nativeBinding.xeddsaSign(privateKey, message))
+    }
 
     const clampedPrivateKey = clampCurvePrivateKeyInPlace(privateKey)
     const privateScalar = bytesToBigIntLE(clampedPrivateKey)
