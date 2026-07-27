@@ -1,5 +1,11 @@
 # zapo-js
 
+## 1.6.2
+
+### Patch Changes
+
+- Fix a store session being unusable after `destroy()`: the destroyed bundle stayed cached in the `createStore` session map, so a new client built for the same `sessionId` in the same process got a bundle whose gates were permanently closed and every store op rejected with `shared-exclusive gate is closed` (first visible on group sends, through the deviceList/groupMetadata/senderKey lookups). `destroy()` now evicts the bundle - guarded so a late destroy on a stale reference cannot drop a newer one - and `destroyCaches()` swaps in freshly built cache stores instead of closing them for good, with the bundle exposing cache domains through getters so recreated clients pick up the new stores. Concurrent resets are serialized and the fresh caches are swapped in only after the previous generation finishes tearing down, so clearing a persistent cache backend cannot race writes to the new stores. Teardown batches now use `allSettled` with a single aggregated warning, so one failing `clear()` can no longer skip the destroy batch and leak cache-store resources, and the deviceList cache honors its documented memory default instead of silently resolving to the noop store when `cacheProviders` is unset (which forced a usync round-trip on every send). The lifecycle semantics are documented on `WaStoreSession` / `WaStore`.
+
 ## 1.6.1
 
 ### Patch Changes
