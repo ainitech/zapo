@@ -7,9 +7,15 @@ import {
     WaFakeConnectionPipeline
 } from '../infra/WaFakeConnectionPipeline'
 import { WaFakeMediaHttpsServer } from '../infra/WaFakeMediaHttpsServer'
+import { WaFakeTcpServer, type WaFakeTcpServerListenInfo } from '../infra/WaFakeTcpServer'
 import { WaFakeWsServer, type WaFakeWsServerListenInfo } from '../infra/WaFakeWsServer'
 import { type FakeNoiseRootCa, generateFakeNoiseRootCa } from '../protocol/auth/cert-chain'
 import type { ParsedClientPayload } from '../protocol/auth/client-payload-validate'
+import {
+    buildPairDeviceIq,
+    buildPairSuccessIq,
+    mintPairingRefs
+} from '../protocol/auth/pair-device'
 import type { BuildSuccessNodeInput } from '../protocol/auth/success-node'
 import type { BuildAbPropsResultInput } from '../protocol/iq/abprops'
 import {
@@ -17,11 +23,27 @@ import {
     type FakeAppStateCollectionPayload
 } from '../protocol/iq/appstate-sync'
 import type { FakeBusinessProfile } from '../protocol/iq/business'
+import {
+    buildCompanionHelloResultContent,
+    buildLinkCodeNotification,
+    parseLinkCodeStanza
+} from '../protocol/iq/link-code'
 import type { FakePrivacyCategoryName, FakePrivacySettingsState } from '../protocol/iq/privacy'
 import type { FakePrivacyTokenIssue } from '../protocol/iq/privacy-token'
 import type { FakeProfilePictureResult } from '../protocol/iq/profile'
-import type { WaFakeIqMatcher, WaFakeIqResponder } from '../protocol/iq/router'
+import {
+    buildIqError,
+    buildIqResult,
+    type WaFakeIqContext,
+    type WaFakeIqMatcher,
+    type WaFakeIqResponder
+} from '../protocol/iq/router'
+import {
+    buildAccountSyncDevicesNotification,
+    type FakeAccountDevice
+} from '../protocol/push/mobile-notification'
 import type { ClientPreKeyBundle } from '../protocol/signal/prekey-upload'
+import type { FakeCompanionHostState } from '../state/fake-companion-host'
 import {
     FakeMediaStore,
     type FakeMediaType,
@@ -35,6 +57,8 @@ import { type AppStateSyncManager, type CapturedAppStateMutation } from './AppSt
 import { FakePairingDriver, type FakePairingDriverOptions } from './FakePairingDriver'
 import { type CreateFakePeerOptions, FakePeer } from './FakePeer'
 import {
+    type CompleteCompanionPairingInput,
+    type CompletedCompanionPairing,
     type ExpectIqOptions,
     type ExpectStanzaOptions,
     FakeServerSession,
@@ -92,6 +116,34 @@ export interface FakeWaServerOptions {
      * clientPayload.username : 'pending'`.
      */
     readonly sessionKey?: (info: FakeSessionKeyInfo) => string
+    /**
+     * Also serve the WhatsApp Mobile transport on a raw TCP listener. Mobile
+     * clients dial `tcp://host:port` instead of upgrading to a WebSocket, but
+     * speak the same framing above the carrier, so both listeners share one
+     * server identity, session model, and IQ router. Pass `true` for an
+     * ephemeral port on the WebSocket host, or an object to pin host/port.
+     * Read the address back from {@link FakeWaServer.tcpUrl} and feed it to the
+     * client's `mobileTransport.tcpUrl`.
+     */
+    readonly tcp?: boolean | { readonly host?: string; readonly port?: number }
+}
+
+const HOST_DOMAIN = 's.whatsapp.net'
+const MOBILE_PRIMARY_PLATFORM = 'android'
+
+/**
+ * Builds the mobile TCP listener when the option asks for one. Defaults its
+ * host to the WebSocket host so both listeners answer on the same interface.
+ */
+function createTcpServer(options: FakeWaServerOptions): WaFakeTcpServer | null {
+    if (!options.tcp) {
+        return null
+    }
+    const config = options.tcp === true ? {} : options.tcp
+    return new WaFakeTcpServer({
+        host: config.host ?? options.host,
+        port: config.port
+    })
 }
 
 export interface FakeSessionKeyInfo {
@@ -135,6 +187,17 @@ export class FakeWaServer {
     private rootCa: FakeNoiseRootCa | null = null
     private serverStaticKeyPair: SignalKeyPair | null = null
     private listenInfo: WaFakeWsServerListenInfo | null = null
+    private readonly tcpServer: WaFakeTcpServer | null
+    private tcpListenInfo: WaFakeTcpServerListenInfo | null = null
+    private readonly pendingCompanionOffers = new Map<string, WaFakeConnectionPipeline>()
+    private readonly mobilePrimaryPipelines = new Map<string, WaFakeConnectionPipeline>()
+    private readonly linkCodeSessions = new Map<
+        string,
+        {
+            readonly companion: WaFakeConnectionPipeline
+            readonly primary: WaFakeConnectionPipeline
+        }
+    >()
     private readonly pipelineListeners = new Set<FakeWaServerPipelineListener>()
     private rejectMode: { readonly code: number; readonly reason: string } | null = null
     private readonly mediaStore = new FakeMediaStore()
@@ -147,12 +210,19 @@ export class FakeWaServer {
         this.options = options
         this.wsServer = new WaFakeWsServer(options)
         this.wsServer.onConnection((connection) => this.handleConnection(connection))
+        this.tcpServer = createTcpServer(options)
+        this.tcpServer?.onConnection((connection) => this.handleConnection(connection))
         this.defaultSession = this.createSession('__default__')
     }
 
     /** State of the single default session (the only session for one client). */
     public get registries(): ServerRegistries {
         return this.defaultSession.registries
+    }
+
+    /** Companion-host account state of the default session (linked devices, key-index list). */
+    public get companionHost(): FakeCompanionHostState {
+        return this.defaultSession.companionHost
     }
 
     public get preKeyDispenser(): PreKeyDispenser {
@@ -185,7 +255,11 @@ export class FakeWaServer {
     private createSession(id: string): FakeServerSession {
         const session = new FakeServerSession(
             id,
-            { requireMediaHttpsInfo: () => this.requireMediaHttpsInfo() },
+            {
+                requireMediaHttpsInfo: () => this.requireMediaHttpsInfo(),
+                completeCompanionPairing: (input) => this.completeCompanionPairing(input),
+                relayLinkCodeStage: (iq, context) => this.handleLinkCodeStage(iq, context)
+            },
             { defaultIqHandlers: this.options.defaultIqHandlers !== false }
         )
         this.sessions.set(id, session)
@@ -376,6 +450,31 @@ export class FakeWaServer {
         input: BuildServerSyncNotificationInput
     ): Promise<void> {
         return this.sessionFor(pipeline).appStateSync.pushServerSyncNotification(pipeline, input)
+    }
+
+    /**
+     * Pushes the account's device set to a mobile primary as `account_sync`.
+     * Defaults to what this session tracks - the primary itself plus every
+     * companion it linked - so passing a shorter list is how a test tells the
+     * primary that a device disappeared while it was offline.
+     */
+    public async pushAccountSyncDevices(
+        pipeline: WaFakeConnectionPipeline,
+        options: { readonly devices?: readonly FakeAccountDevice[] } = {}
+    ): Promise<void> {
+        const session = this.sessionFor(pipeline)
+        const primary = session.companionHost.primary
+        if (!primary && !options.devices) {
+            throw new Error('cannot push account_sync: this session has no mobile primary')
+        }
+        const devices = options.devices ?? [
+            { deviceJid: primary!.jid, keyIndex: 0 },
+            ...session.companionHost.linkedCompanions().map((companion) => ({
+                deviceJid: companion.deviceJid,
+                keyIndex: companion.keyIndex
+            }))
+        ]
+        await pipeline.sendStanza(buildAccountSyncDevicesNotification({ devices }))
     }
 
     public onAuthenticatedPipeline(listener: AuthenticatedPipelineListener): () => void {
@@ -608,6 +707,21 @@ export class FakeWaServer {
         return this.requireListening().port
     }
 
+    /**
+     * `tcp://host:port` of the mobile listener, for the client's
+     * `mobileTransport.tcpUrl`.
+     *
+     * @throws when the server was started without the `tcp` option.
+     */
+    public get tcpUrl(): string {
+        if (!this.tcpListenInfo) {
+            throw new Error(
+                'fake server has no mobile listener; start it with { tcp: true } to serve the mobile transport'
+            )
+        }
+        return this.tcpListenInfo.url
+    }
+
     public get noiseRootCa(): FakeWaServerNoiseRootCa {
         const root = this.requireRootCa()
         return { publicKey: root.publicKey, serial: root.serial }
@@ -636,12 +750,36 @@ export class FakeWaServer {
         this.wsServer.setHttpRequestHandler(mediaHandler)
         this.mediaHttpsServer.setRequestHandler(mediaHandler)
         this.listenInfo = await this.wsServer.listen()
-        await this.mediaHttpsServer.listen('127.0.0.1')
+        try {
+            if (this.tcpServer) {
+                this.tcpListenInfo = await this.tcpServer.listen()
+            }
+            await this.mediaHttpsServer.listen('127.0.0.1')
+        } catch (error) {
+            // A half-open server is worse than none: the listeners that did
+            // come up would stay bound and `listenInfo` would make a retry a
+            // no-op. Roll everything back so the caller can start over.
+            await this.rollbackFailedListen()
+            throw error
+        }
+    }
+
+    private async rollbackFailedListen(): Promise<void> {
+        const ignore = (): undefined => undefined
+        await this.wsServer.close().catch(ignore)
+        await this.tcpServer?.close().catch(ignore)
+        await this.mediaHttpsServer.close().catch(ignore)
+        this.listenInfo = null
+        this.tcpListenInfo = null
+        this.rootCa = null
+        this.serverStaticKeyPair = null
     }
 
     public async stop(): Promise<void> {
         this.pipelines.clear()
         await this.wsServer.close()
+        await this.tcpServer?.close()
+        this.tcpListenInfo = null
         await this.mediaHttpsServer.close()
         if (this.cachedMediaProxyAgent) {
             this.cachedMediaProxyAgent.destroy()
@@ -665,7 +803,8 @@ export class FakeWaServer {
             connection,
             rootCa: this.rootCa,
             serverStaticKeyPair: this.serverStaticKeyPair,
-            routeIq: (node: BinaryNode) => this.sessionFor(pipeline).routeIq(node),
+            routeIq: (node: BinaryNode) =>
+                this.sessionFor(pipeline).routeIq(node, { connection: pipeline }),
             ...(this.options.successNodeAttributes !== undefined
                 ? { successNodeAttributes: this.options.successNodeAttributes }
                 : {})
@@ -675,6 +814,7 @@ export class FakeWaServer {
         pipeline.setEvents({
             onAuthenticated: () => {
                 this.bindPipelineSession(pipeline)
+                this.bindMobilePrimary(pipeline)
                 for (const listener of this.authenticatedListeners) {
                     try {
                         void Promise.resolve(listener(pipeline)).catch(() => undefined)
@@ -684,7 +824,7 @@ export class FakeWaServer {
                 }
             },
             onStanza: (node: BinaryNode) => this.sessionFor(pipeline).handleCapturedStanza(node),
-            onClose: () => this.pipelines.delete(pipeline)
+            onClose: () => this.forgetPipeline(pipeline)
         })
         for (const listener of this.pipelineListeners) {
             try {
@@ -709,6 +849,160 @@ export class FakeWaServer {
         }
         const id = resolveKey({ clientPayload, pipeline })
         this.pipelineSessions.set(pipeline, this.session(id))
+    }
+
+    /** Drops every reference to a closed connection so a relay never targets it. */
+    private forgetPipeline(pipeline: WaFakeConnectionPipeline): void {
+        this.pipelines.delete(pipeline)
+        for (const [ref, offered] of this.pendingCompanionOffers) {
+            if (offered === pipeline) {
+                this.pendingCompanionOffers.delete(ref)
+            }
+        }
+        for (const [jid, primary] of this.mobilePrimaryPipelines) {
+            if (primary === pipeline) {
+                this.mobilePrimaryPipelines.delete(jid)
+            }
+        }
+        for (const [ref, session] of this.linkCodeSessions) {
+            if (session.companion === pipeline || session.primary === pipeline) {
+                this.linkCodeSessions.delete(ref)
+            }
+        }
+    }
+
+    /**
+     * Records a phone login as the session's account owner. Everything on the
+     * companion-host path keys off it: device jids are minted under its number,
+     * and `remove-companion-device` is read as a revoke rather than a logout.
+     */
+    private bindMobilePrimary(pipeline: WaFakeConnectionPipeline): void {
+        const clientPayload = pipeline.clientPayload
+        if (clientPayload?.kind !== 'login' || clientPayload.flavor !== 'mobile') {
+            return
+        }
+        const session = this.sessionFor(pipeline)
+        const jid = `${clientPayload.username}@${HOST_DOMAIN}`
+        session.companionHost.bindPrimary({ username: clientPayload.username, jid })
+        if (session.companionHost.primary?.jid !== jid) {
+            // The session already belongs to another number. Wiring this login
+            // in anyway would let a link be relayed to this connection and then
+            // minted under the account that owns the session.
+            return
+        }
+        session.registries.registerDeviceId(jid, 0)
+        // A reconnect of the same account replaces its stale connection here.
+        this.mobilePrimaryPipelines.set(jid, pipeline)
+    }
+
+    /**
+     * Offers a companion connection the refs for a primary-driven link: pushes
+     * the `pair-device` IQ it turns into a QR, and remembers each ref so the
+     * primary's upload can be routed back to this connection. Returns the refs.
+     *
+     * This is the counterpart of {@link runPairing}, where the server itself
+     * plays the primary. Here a real mobile-primary client signs the identity
+     * and the server only relays.
+     */
+    public async offerCompanionPairing(
+        pipeline: WaFakeConnectionPipeline,
+        options: { readonly refCount?: number } = {}
+    ): Promise<readonly string[]> {
+        const refs = await mintPairingRefs(options.refCount)
+        // Send before registering: the builder rejects a bad ref count and the
+        // send can fail, and either would leave refs in the map that no
+        // connection will ever consume.
+        await pipeline.sendStanza(buildPairDeviceIq({ refs }))
+        for (const ref of refs) {
+            this.pendingCompanionOffers.set(ref, pipeline)
+        }
+        return refs
+    }
+
+    /**
+     * Relays one link-code stage between the two clients running the pairing
+     * handshake. `companion_hello` mints the ref that ties the stages together
+     * and registers it as a pairing offer, so the primary's later `pair-device`
+     * upload lands on the same companion connection as the QR flow.
+     */
+    private async handleLinkCodeStage(
+        iq: BinaryNode,
+        context: WaFakeIqContext | undefined
+    ): Promise<BinaryNode | null> {
+        const parsed = parseLinkCodeStanza(iq)
+        if (!parsed || !context) {
+            return null
+        }
+        const sender = context.connection as WaFakeConnectionPipeline
+        if (parsed.stage === 'companion_hello') {
+            const primary = parsed.phoneJid
+                ? this.mobilePrimaryPipelines.get(parsed.phoneJid)
+                : undefined
+            if (!primary) {
+                return buildIqError(iq, { code: 404, text: 'primary-not-connected' })
+            }
+            const [ref] = await mintPairingRefs(1)
+            this.linkCodeSessions.set(ref, { companion: sender, primary })
+            this.pendingCompanionOffers.set(ref, sender)
+            await primary.sendStanza(
+                buildLinkCodeNotification({
+                    stage: 'companion_hello',
+                    ref,
+                    children: parsed.children
+                })
+            )
+            return buildIqResult(iq, { content: buildCompanionHelloResultContent(ref) })
+        }
+
+        const session = parsed.ref ? this.linkCodeSessions.get(parsed.ref) : undefined
+        if (!session || !parsed.ref) {
+            return buildIqError(iq, { code: 404, text: 'unknown-pairing-ref' })
+        }
+        const target = parsed.stage === 'primary_hello' ? session.companion : session.primary
+        await target.sendStanza(
+            buildLinkCodeNotification({
+                stage: parsed.stage,
+                ref: parsed.ref,
+                children: parsed.children
+            })
+        )
+        return buildIqResult(iq)
+    }
+
+    /**
+     * Host side of a companion link: hands the primary-signed identity to the
+     * connection that owns `ref` and reports what that companion advertised at
+     * registration. Resolves `null` for an unknown or already-consumed ref.
+     */
+    private async completeCompanionPairing(
+        input: CompleteCompanionPairingInput
+    ): Promise<CompletedCompanionPairing | null> {
+        const pipeline = this.pendingCompanionOffers.get(input.ref)
+        if (!pipeline) {
+            return null
+        }
+        const registration = pipeline.clientPayload
+        const companionPropsBytes =
+            registration?.kind === 'registration'
+                ? (registration.devicePairingData.deviceProps ?? null)
+                : null
+        // `<platform>` describes the primary that signed the link, not the
+        // companion. A zapo mobile session always logs in as ANDROID, so this
+        // is the only value a primary-driven link can carry here.
+        const platform = MOBILE_PRIMARY_PLATFORM
+        await pipeline.sendStanza(
+            buildPairSuccessIq({
+                deviceJid: input.deviceJid,
+                platform,
+                deviceIdentityBytes: input.deviceIdentityBytes
+            })
+        )
+        for (const [ref, offered] of this.pendingCompanionOffers) {
+            if (offered === pipeline) {
+                this.pendingCompanionOffers.delete(ref)
+            }
+        }
+        return { companionPropsBytes, platform }
     }
 
     private buildMediaRequestHandler(): (req: IncomingMessage, res: ServerResponse) => void {
