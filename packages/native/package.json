@@ -33,7 +33,7 @@
         "access": "public"
     },
     "peerDependencies": {
-        "zapo-js": "^1.7.0"
+        "zapo-js": "^1.6.2"
     },
     "peerDependenciesMeta": {
         "zapo-js": {
