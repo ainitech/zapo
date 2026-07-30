@@ -22,10 +22,24 @@ import {
 } from '@protocol/constants'
 
 /**
+ * Content keys that carry a payload but do not end in `Message`, so the
+ * substring match below would miss them.
+ */
+const UNSUFFIXED_CONTENT_KEYS = new Set([
+    'conversation',
+    'messageHistoryBundle',
+    'messageHistoryNotice'
+])
+
+/**
  * Returns the content-type key of a message - `'conversation'`,
- * `'imageMessage'`, `'extendedTextMessage'`, etc. - or `undefined` for an empty
- * message. `senderKeyDistributionMessage` is skipped so group messages report
- * their real payload type rather than the piggy-backed sender-key.
+ * `'imageMessage'`, `'extendedTextMessage'`, `'messageHistoryBundle'`, etc. -
+ * or `undefined` for an empty message. `senderKeyDistributionMessage` is
+ * skipped so group messages report their real payload type rather than the
+ * piggy-backed sender-key.
+ *
+ * A key that is present but holds `null`/`undefined` carries no payload and is
+ * skipped, so an explicitly-cleared field cannot mask the real content.
  */
 export function getContentType(
     content: Proto.IMessage | undefined
@@ -33,7 +47,10 @@ export function getContentType(
     if (!content) return undefined
     const key = Object.keys(content).find(
         (k) =>
-            (k === 'conversation' || k.includes('Message')) && k !== 'senderKeyDistributionMessage'
+            content[k as keyof Proto.IMessage] !== null &&
+            content[k as keyof Proto.IMessage] !== undefined &&
+            (UNSUFFIXED_CONTENT_KEYS.has(k) || k.includes('Message')) &&
+            k !== 'senderKeyDistributionMessage'
     )
     return key as keyof Proto.IMessage | undefined
 }

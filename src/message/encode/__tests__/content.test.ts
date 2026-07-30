@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+    getContentType,
     isSendMediaMessage,
     resolveButtonAddonKind,
     resolveEditAttr,
@@ -23,6 +24,29 @@ test('content helpers detect media payload and resolve message type', () => {
     assert.equal(resolveMessageTypeAttr({ imageMessage: {} }), 'media')
     assert.equal(resolveMessageTypeAttr({ conversation: 'text' }), 'text')
     assert.equal(resolveMessageTypeAttr({ pollCreationMessage: {} }), 'poll')
+})
+
+test('getContentType picks the payload key, including the unsuffixed ones', () => {
+    assert.equal(getContentType(undefined), undefined)
+    assert.equal(getContentType({}), undefined)
+    assert.equal(getContentType({ conversation: 'hi' }), 'conversation')
+    assert.equal(getContentType({ imageMessage: {} }), 'imageMessage')
+    assert.equal(
+        getContentType({ senderKeyDistributionMessage: {}, imageMessage: {} }),
+        'imageMessage'
+    )
+    // group-history payload keys do not end in `Message`
+    assert.equal(getContentType({ messageHistoryBundle: {} }), 'messageHistoryBundle')
+    assert.equal(getContentType({ messageHistoryNotice: {} }), 'messageHistoryNotice')
+})
+
+test('getContentType skips keys that are present but hold no payload', () => {
+    assert.equal(
+        getContentType({ messageHistoryBundle: undefined, imageMessage: {} }),
+        'imageMessage'
+    )
+    assert.equal(getContentType({ imageMessage: null, conversation: 'hi' }), 'conversation')
+    assert.equal(getContentType({ imageMessage: undefined }), undefined)
 })
 
 test('resolveButtonAddonKind classifies list/interactive incl. documentWithCaption wrap', () => {
