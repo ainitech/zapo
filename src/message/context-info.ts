@@ -14,6 +14,9 @@ export interface WaSendContextInfo {
 
     readonly isSpoiler?: boolean
     readonly expirationSeconds?: number
+    readonly ephemeralSettingTimestamp?: number
+    readonly disappearingModeInitiator?: Proto.DisappearingMode.Initiator
+    readonly disappearingModeTrigger?: Proto.DisappearingMode.Trigger
 
     readonly groupSubject?: string
     readonly parentGroupJid?: string
@@ -45,6 +48,22 @@ export function buildContextInfoProto(input: WaSendContextInfo): Proto.IContextI
 
     if (input.isSpoiler !== undefined) ctx.isSpoiler = input.isSpoiler
     if (input.expirationSeconds !== undefined) ctx.expiration = input.expirationSeconds
+    if (input.ephemeralSettingTimestamp !== undefined) {
+        ctx.ephemeralSettingTimestamp = input.ephemeralSettingTimestamp
+    }
+    if (
+        input.disappearingModeInitiator !== undefined ||
+        input.disappearingModeTrigger !== undefined
+    ) {
+        ctx.disappearingMode = {
+            ...(input.disappearingModeInitiator !== undefined
+                ? { initiator: input.disappearingModeInitiator }
+                : {}),
+            ...(input.disappearingModeTrigger !== undefined
+                ? { trigger: input.disappearingModeTrigger }
+                : {})
+        }
+    }
 
     if (input.groupSubject !== undefined) ctx.groupSubject = input.groupSubject
     if (input.parentGroupJid !== undefined) ctx.parentGroupJid = input.parentGroupJid

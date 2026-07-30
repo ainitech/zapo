@@ -424,6 +424,15 @@ const SQLITE_MIGRATIONS: readonly WaSqliteMigration[] = [
                 ALTER TABLE retry_inbound_counters DROP COLUMN updated_at_ms;
             `)
         }
+    },
+    {
+        id: '0017_mailbox_threads_ephemeral_setting_timestamp',
+        domain: 'mailbox',
+        up: (db) => {
+            db.exec(`
+                ALTER TABLE mailbox_threads ADD COLUMN ephemeral_setting_timestamp INTEGER;
+            `)
+        }
     }
 ]
 

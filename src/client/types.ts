@@ -407,9 +407,22 @@ export interface WaSendMessageOptions extends WaMessagePublishOptions {
      */
     readonly expirationSeconds?: number
     /**
-     * Skip the automatic `ephemeralSettingTimestamp`/`expiration` injection
-     * applied to messages sent into groups with disappearing-mode on (the cached
-     * group ephemeral is otherwise fetched and applied for you). Off by default.
+     * Unix seconds when disappearing-mode was enabled, sent as
+     * `contextInfo.ephemeralSettingTimestamp`. 1:1 only – groups never carry it.
+     * Overrides the value the auto-inject resolves from the thread store; omit
+     * it unless you have a reason, since a missing timestamp makes the peer warn
+     * that the message will not disappear.
+     */
+    readonly ephemeralSettingTimestamp?: number
+    /**
+     * Overrides `contextInfo.disappearingMode.trigger`. The 1:1 auto-inject
+     * already sets `CHAT_SETTING`.
+     */
+    readonly disappearingModeTrigger?: Proto.DisappearingMode.Trigger
+    /**
+     * Skip the automatic disappearing-message injection. Despite the name it
+     * covers 1:1 too: groups get `expiration` only, 1:1 also gets
+     * `ephemeralSettingTimestamp` and `disappearingMode`. Off by default.
      *
      * Relationship with {@link expirationSeconds}: a non-undefined
      * `expirationSeconds` already short-circuits the auto-inject, so this flag is

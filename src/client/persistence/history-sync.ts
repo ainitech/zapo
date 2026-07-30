@@ -8,6 +8,7 @@ import type { Logger } from '@infra/log/types'
 import type { WaMediaTransferClient } from '@media/transfer/WaMediaTransferClient'
 import { proto, type Proto } from '@proto'
 import { isUserJid } from '@protocol/jid'
+import { normalizeEphemeralSettingSeconds } from '@protocol/message'
 import { decodeProtoBytes, toBytesView } from '@util/bytes'
 import { longToNumber, toError } from '@util/primitives'
 
@@ -183,7 +184,11 @@ export async function processHistorySyncNotification(
             pinned: conversation.pinned ?? undefined,
             muteEndMs: longToNumber(conversation.muteEndTime) || undefined,
             markedAsUnread: conversation.markedAsUnread ?? undefined,
-            ephemeralExpiration: conversation.ephemeralExpiration ?? undefined
+            ephemeralExpiration: conversation.ephemeralExpiration ?? undefined,
+            ephemeralSettingTimestamp:
+                normalizeEphemeralSettingSeconds(
+                    longToNumber(conversation.ephemeralSettingTimestamp)
+                ) || undefined
         })
         if (pendingWrites.length >= HISTORY_SYNC_MAX_PENDING_WRITES) {
             await flushPendingWrites(pendingWrites)
