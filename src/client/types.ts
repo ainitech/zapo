@@ -945,12 +945,12 @@ export interface WaIncomingUnhandledStanzaEvent extends WaIncomingBaseEvent {
 }
 
 /**
- * Why an incoming message arrived as a content-less placeholder. `view_once`:
- * a view-once already consumed elsewhere. `hosted`: a hosted/bot message that
- * could not be fanned out. `other`: an `unavailable` marker the lib does not
- * categorize yet.
+ * Why an incoming message arrived as a content-less placeholder. `view_once`: a
+ * view-once already consumed elsewhere. `hosted`: a hosted account whose message
+ * could not be fanned out. `bot`: a bot message whose fanout never ran. `other`:
+ * a plain fanout placeholder – the only kind the primary device resends.
  */
-export type WaUnavailableMessageKind = 'view_once' | 'hosted' | 'other'
+export type WaUnavailableMessageKind = 'view_once' | 'hosted' | 'bot' | 'other'
 
 export interface WaIncomingUnavailableMessageEvent extends Omit<
     WaIncomingBaseEvent,
@@ -959,9 +959,16 @@ export interface WaIncomingUnavailableMessageEvent extends Omit<
     /** Which flavour of content the server signalled as unavailable. */
     readonly kind: WaUnavailableMessageKind
     /**
+     * `true` when a resend was queued for the primary device; the payload then
+     * arrives as a `message` event with the same key. Best-effort, like wa-web:
+     * the request is not persisted, so a failed peer message is not retried.
+     * `false` for the unrecoverable flavours, messages past the server age
+     * window, and mobile-primary sessions.
+     */
+    readonly resendRequested: boolean
+    /**
      * The message key (chat, stanza id, author, addressing metadata) – same
-     * shape the `message` event carries, so it can be stored or correlated. There
-     * is no decrypted `message`: the payload is unavailable and cannot be fetched.
+     * shape the `message` event carries, so it can be stored or correlated.
      */
     readonly key: WaIncomingMessageKey
     /** Stanza `t` attr (seconds since epoch). */
@@ -1429,11 +1436,11 @@ export interface WaClientEventMap {
      */
     readonly message_protocol: (event: WaIncomingProtocolMessageEvent) => void
     /**
-     * A message the server delivered as a content-less placeholder: the payload
-     * is unavailable and cannot be recovered (a view-once already consumed, or a
-     * hosted/bot message that could not be fanned out). The lib acks it and emits
-     * this instead of a `message` event for the same stanza. Branch on
-     * `event.kind`.
+     * A message the server delivered as a content-less placeholder. The lib acks
+     * it and emits this instead of a `message` event for the same stanza. A plain
+     * fanout placeholder is asked back from the primary device and arrives later
+     * as a `message` event (see `event.resendRequested`); a consumed view-once or
+     * a hosted/bot message that could not be fanned out is never resent.
      */
     readonly message_unavailable: (event: WaIncomingUnavailableMessageEvent) => void
     /**

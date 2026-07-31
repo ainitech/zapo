@@ -43,6 +43,11 @@ interface WaIncomingMessageAckHandlerOptions {
         context: WaRetryDecryptFailureContext,
         error: unknown
     ) => Promise<boolean>
+    /**
+     * Asks the primary device for the plaintext of an `<unavailable/>` message.
+     * Returns `true` when the request was queued.
+     */
+    readonly requestPlaceholderResend?: (context: WaRetryDecryptFailureContext) => boolean
     readonly emitIncomingMessage?: (event: WaIncomingMessageEvent) => void
     readonly emitNewsletterMessageUpdate?: (event: WaIncomingNewsletterMessageUpdateEvent) => void
     readonly emitUnavailableMessage?: (event: WaIncomingUnavailableMessageEvent) => void
@@ -662,12 +667,13 @@ export async function handleIncomingMessageAck(
 
     const unavailableNode = findNodeChild(node, 'unavailable')
     if (unavailableNode) {
-        const kind: WaUnavailableMessageKind =
-            unavailableNode.attrs.hosted === 'true'
-                ? 'hosted'
-                : unavailableNode.attrs.type === 'view_once'
-                  ? 'view_once'
-                  : 'other'
+        const kind: WaUnavailableMessageKind = findNodeChild(node, 'bot')
+            ? 'bot'
+            : unavailableNode.attrs.hosted === 'true'
+              ? 'hosted'
+              : unavailableNode.attrs.type === 'view_once'
+                ? 'view_once'
+                : 'other'
         const senderJid = node.attrs.participant ?? node.attrs.from
         const sender = senderJid ? parseJidFull(senderJid) : null
         const { key, pushName } = buildIncomingMessageKey(
@@ -675,10 +681,20 @@ export async function handleIncomingMessageAck(
             sender ? { userJid: sender.userJid, device: sender.address.device } : null,
             options
         )
+        const resendRequested =
+            options.requestPlaceholderResend?.({
+                messageNode: node,
+                stanzaId: id,
+                from,
+                participant: node.attrs.participant,
+                recipient: node.attrs.recipient,
+                t: node.attrs.t
+            }) === true
         options.emitUnavailableMessage?.({
             rawNode: buildIncomingEventRawNode(node),
             key,
             kind,
+            resendRequested,
             stanzaType: node.attrs.type,
             offline: node.attrs.offline !== undefined,
             timestampSeconds: parseOptionalInt(node.attrs.t),
@@ -696,7 +712,8 @@ export async function handleIncomingMessageAck(
             to: from,
             type: ackNode.attrs.type,
             participant: ackNode.attrs.participant,
-            unavailableKind: kind
+            unavailableKind: kind,
+            resendRequested
         })
         await options.sendNode(ackNode)
         return true
