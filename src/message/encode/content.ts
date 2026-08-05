@@ -430,15 +430,27 @@ function resolveEncMediaTypeFrom(msg: Proto.IMessage): string | null {
     return null
 }
 
-export type WaButtonAddonKind = 'list' | 'interactive'
+/** Companion business node kind for list and native-flow messages. */
+export type WaButtonAddonKind = 'list' | 'interactive' | 'payment_info' | 'order_details'
 
 export function resolveButtonAddonKind(message: Proto.IMessage): WaButtonAddonKind | null {
     return resolveButtonAddonKindFrom(unwrapMessage(message))
 }
 
+function resolveNativeFlowAddonKind(
+    nativeFlow: Proto.Message.InteractiveMessage.INativeFlowMessage
+): WaButtonAddonKind {
+    const firstButtonName = nativeFlow.buttons?.[0]?.name
+    if (firstButtonName === 'payment_info') return 'payment_info'
+    if (firstButtonName === 'review_and_pay') return 'order_details'
+    return 'interactive'
+}
+
 function resolveButtonAddonKindFrom(msg: Proto.IMessage): WaButtonAddonKind | null {
     if (msg.listMessage) return 'list'
-    if (msg.buttonsMessage || msg.interactiveMessage?.nativeFlowMessage) return 'interactive'
+    if (msg.buttonsMessage) return 'interactive'
+    const nativeFlow = msg.interactiveMessage?.nativeFlowMessage
+    if (nativeFlow) return resolveNativeFlowAddonKind(nativeFlow)
     return null
 }
 

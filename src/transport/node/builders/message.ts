@@ -164,28 +164,40 @@ function pushOptionalNodes(
 }
 
 export function buildButtonAddonNode(kind: WaButtonAddonKind): BinaryNode {
-    const inner: BinaryNode =
-        kind === 'list'
-            ? {
-                  tag: WA_NODE_TAGS.LIST,
-                  attrs: { type: 'product_list', v: '2' },
-                  content: undefined
-              }
-            : {
-                  tag: WA_NODE_TAGS.INTERACTIVE,
-                  attrs: { type: WA_NODE_TAGS.NATIVE_FLOW, v: '1' },
-                  content: [
-                      {
-                          tag: WA_NODE_TAGS.NATIVE_FLOW,
-                          attrs: { v: '9', name: 'mixed' },
-                          content: undefined
-                      }
-                  ]
-              }
+    if (kind === 'list') {
+        return {
+            tag: WA_NODE_TAGS.BIZ,
+            attrs: {},
+            content: [
+                {
+                    tag: WA_NODE_TAGS.LIST,
+                    attrs: { type: 'product_list', v: '2' },
+                    content: undefined
+                }
+            ]
+        }
+    }
+
+    const nativeFlowName = kind === 'payment_info' || kind === 'order_details' ? kind : 'mixed'
+    const nativeFlowAttrs: Record<string, string> =
+        nativeFlowName === 'mixed' ? { v: '9', name: 'mixed' } : { name: nativeFlowName }
+
     return {
         tag: WA_NODE_TAGS.BIZ,
         attrs: {},
-        content: [inner]
+        content: [
+            {
+                tag: WA_NODE_TAGS.INTERACTIVE,
+                attrs: { type: WA_NODE_TAGS.NATIVE_FLOW, v: '1' },
+                content: [
+                    {
+                        tag: WA_NODE_TAGS.NATIVE_FLOW,
+                        attrs: nativeFlowAttrs,
+                        content: undefined
+                    }
+                ]
+            }
+        ]
     }
 }
 
