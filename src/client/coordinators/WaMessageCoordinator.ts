@@ -28,13 +28,14 @@ import { MEDIA_UPLOAD_PATHS } from '@media/constants'
 import type { WaMediaTransferClient } from '@media/transfer/WaMediaTransferClient'
 import type { MediaKind } from '@media/types'
 import {
-    buildAddonAdditionalData,
+    buildAddonSenderPairs,
+    collectUniqueUserJids,
     decodeAddonPlaintext,
-    decryptAddonPayload,
+    decryptAddonPayloadWithSenderFallback,
     identifyEncryptedAddon,
+    resolveAddonParentSenderFromKey,
     resolveParentMessageSecret,
-    resolvePollOptionNames,
-    shouldUseAddonAdditionalData
+    resolvePollOptionNames
 } from '@message/crypto/addon-crypto'
 import { unwrapMessage } from '@message/encode/content'
 import { resolveMediaPayload } from '@message/encode/media-payload'
@@ -933,20 +934,40 @@ export class WaMessageCoordinator {
             return
         }
 
-        const parentMsgOriginalSender = parentEntry.senderJid
-        const modificationSender = event.key.participant ?? event.key.remoteJid
+        const modificationSenderRaw = event.key.participant ?? event.key.remoteJid
+        if (!modificationSenderRaw) return
 
-        const plaintext = await decryptAddonPayload({
+        const modificationSenderCandidates = collectUniqueUserJids(
+            event.key.fromMe ? event.rawNode.attrs.from : undefined,
+            modificationSenderRaw,
+            event.key.participantAlt,
+            event.key.remoteJidAlt,
+            event.rawNode.attrs.participant_pn,
+            event.rawNode.attrs.sender_pn,
+            event.rawNode.attrs.participant,
+            event.key.isGroup ? undefined : event.rawNode.attrs.from
+        )
+
+        const keyParentSender = resolveAddonParentSenderFromKey(
+            addon.targetMessageKey,
+            event.key.isGroup
+        )
+        const parentMsgOriginalSenderCandidates = collectUniqueUserJids(
+            keyParentSender,
+            parentEntry.senderJid
+        )
+        const senderPairs = buildAddonSenderPairs({
+            parentCandidates: parentMsgOriginalSenderCandidates,
+            modificationCandidates: modificationSenderCandidates
+        })
+
+        const plaintext = await decryptAddonPayloadWithSenderFallback({
             messageSecret: parentEntry.secret,
             stanzaId: targetMessageId,
-            parentMsgOriginalSender,
-            modificationSender,
+            senderPairs,
             modificationType: addon.modificationType,
             ciphertext: addon.encPayload,
-            iv: addon.encIv,
-            additionalData: shouldUseAddonAdditionalData(addon.modificationType)
-                ? buildAddonAdditionalData(targetMessageId, modificationSender)
-                : undefined
+            iv: addon.encIv
         })
 
         let decrypted = decodeAddonPlaintext(addon.kind, plaintext)
