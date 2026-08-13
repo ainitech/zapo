@@ -88,6 +88,10 @@ import { createDefaultLinkPreviewFetcher } from '@message/addons/link-preview/fe
 import { processNewsletterLiveUpdates } from '@message/kinds/newsletter'
 import { handleIncomingMessageAck } from '@message/primitives/incoming'
 import {
+    createMediaRetryRequester,
+    type WaMediaRetryRequester
+} from '@message/primitives/media-retry'
+import {
     createPeerDataOperationRequester,
     type PeerDataOperationRequester
 } from '@message/primitives/peer-data-operation'
@@ -312,6 +316,7 @@ function createIncomingNodeRuntime(input: {
     readonly streamControl: WaStreamControlHandler
     readonly mediaMessageBuildOptions: WaMediaMessageOptions
     readonly retryCoordinator: WaRetryCoordinator
+    readonly mediaRetryRequester: WaMediaRetryRequester
     readonly messageDispatch: WaMessageDispatchCoordinator
     readonly sendNode: (node: BinaryNode) => Promise<void>
     readonly syncAppState: () => Promise<void>
@@ -336,6 +341,7 @@ function createIncomingNodeRuntime(input: {
         streamControl,
         mediaMessageBuildOptions,
         retryCoordinator,
+        mediaRetryRequester,
         messageDispatch,
         sendNode,
         syncAppState,
@@ -369,6 +375,7 @@ function createIncomingNodeRuntime(input: {
             handleIncomingMessageAck(node, incomingMessageAckOptions),
         sendNode,
         handleIncomingRetryReceipt: (node) => retryCoordinator.handleIncomingRetryReceipt(node),
+        handleMediaRetryNotification: (node) => mediaRetryRequester.handleNotification(node),
         trackOutboundReceipt: (node) => retryCoordinator.trackOutboundReceipt(node),
         emitIncomingReceipt: (event) => emitEvent('receipt', event),
         emitIncomingPresence: (event) => emitEvent('presence', event),
@@ -819,9 +826,16 @@ export function buildWaClientDependencies(input: {
         subscribeToProtocolMessage: runtime.subscribeProtocolMessage
     })
 
+    const mediaRetryRequester = createMediaRetryRequester({
+        logger,
+        sendNode: (node) => nodeOrchestrator.sendNode(node, false),
+        getCurrentCredentials
+    })
+
     const messageCoordinator = new WaMessageCoordinator({
         messageDispatch,
         mediaTransfer,
+        mediaRetry: mediaRetryRequester,
         mediaUploadOptions: mediaMessageBuildOptions,
         logger,
         messageStore: sessionStore.messages,
@@ -1103,6 +1117,7 @@ export function buildWaClientDependencies(input: {
             streamControl,
             mediaMessageBuildOptions,
             retryCoordinator,
+            mediaRetryRequester,
             messageDispatch,
             sendNode: runtime.sendNode,
             syncAppState: runtime.syncAppState,
