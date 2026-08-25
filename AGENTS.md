@@ -71,7 +71,8 @@ zapo/
 │   └── util/           # shared pure helpers
 ├── packages/           # Optional packages (npm scope: @zapo-js)
 │   └── <name>/         # e.g. store-mysql, store-sqlite, store-postgres, store-redis,
-│       │               # store-mongo, media-utils, fake-server, mcp-server
+│       │               # store-mongo, media-utils, baileys-connector, fake-server,
+│       │               # mcp-server
 │       ├── src/
 │       ├── package.json
 │       ├── tsconfig.json

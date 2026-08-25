@@ -8,6 +8,7 @@ export {
     decodeBase64Url,
     EMPTY_BYTES,
     hexToBytes,
+    readAllBytes,
     TEXT_DECODER,
     TEXT_ENCODER,
     toBytesView,

@@ -1,0 +1,49 @@
+{
+    "name": "@zapo-js/baileys-connector",
+    "version": "1.0.0",
+    "description": "Drop-in @whiskeysockets/baileys API surface backed by zapo-js",
+    "license": "MIT",
+    "author": "vinikjkkj <contact@vinicius.email> (https://github.com/vinikjkkj)",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vinikjkkj/zapo.git",
+        "directory": "packages/baileys-connector"
+    },
+    "main": "dist/index.js",
+    "module": "dist/esm/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "require": "./dist/index.js",
+            "import": "./dist/esm/index.js",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.cjs.json && tsc -p tsconfig.build.esm.json && node ../../scripts/finalize-esm-build.cjs",
+        "typecheck": "tsc --noEmit",
+        "test": "node --import tsx --test \"src/**/__tests__/**/*.test.ts\""
+    },
+    "peerDependencies": {
+        "zapo-js": "^1.8.0",
+        "@zapo-js/store-sqlite": "^1.0.0"
+    },
+    "peerDependenciesMeta": {
+        "@zapo-js/store-sqlite": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "zapo-js": "file:../.."
+    },
+    "engines": {
+        "node": ">=20.9.0"
+    }
+}

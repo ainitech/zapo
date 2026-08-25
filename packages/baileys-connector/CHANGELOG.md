@@ -1,0 +1,1 @@
+# @zapo-js/baileys-connector

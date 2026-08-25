@@ -50,6 +50,7 @@ module.exports = [
             parserOptions: {
                 tsconfigRootDir: __dirname,
                 project: [
+                    './packages/baileys-connector/tsconfig.json',
                     './packages/store-mysql/tsconfig.json',
                     './packages/store-sqlite/tsconfig.json',
                     './packages/store-postgres/tsconfig.json',
@@ -87,6 +88,7 @@ module.exports = [
                         './tsconfig.json',
                         './bench/tsconfig.json',
                         './examples/tsconfig.json',
+                        './packages/baileys-connector/tsconfig.json',
                         './packages/store-mysql/tsconfig.json',
                         './packages/store-sqlite/tsconfig.json',
                         './packages/store-postgres/tsconfig.json',

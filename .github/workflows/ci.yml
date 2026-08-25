@@ -101,6 +101,22 @@ jobs:
             - run: npx turbo run build --filter=@zapo-js/fake-server
             - run: npm test -w packages/fake-server
 
+    test-baileys-connector:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        needs: build-core
+
+        steps:
+            - uses: actions/checkout@v4
+            - uses: ./.github/actions/setup-node
+            - uses: actions/download-artifact@v4
+              with:
+                  name: core-build
+                  path: dist/
+
+            - run: npx turbo run build --filter=@zapo-js/baileys-connector
+            - run: npm test -w packages/baileys-connector
+
     test-media-utils:
         runs-on: ubuntu-latest
         timeout-minutes: 15
@@ -383,6 +399,7 @@ jobs:
             - typecheck-packages
             - test-core
             - test-fake-server
+            - test-baileys-connector
             - test-media-utils
             - test-sqlite
             - test-mcp-server
